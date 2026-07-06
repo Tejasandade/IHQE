@@ -27,7 +27,9 @@ PG_HOST = os.getenv("PG_HOST", "localhost")
 PG_PORT = int(os.getenv("PG_PORT", 5432))
 PG_DATABASE = os.getenv("PG_DATABASE", "ihqe")
 PG_USER = os.getenv("PG_USER", "postgres")
-PG_PASSWORD = os.getenv("PG_PASSWORD", "postgres")
+PG_PASSWORD = os.getenv("PG_PASSWORD", "ihqe_secret")
+
+INTELLIGENCE_WEIGHTS = {'12M': 5.0, '3M': 3.0, '1M': 2.0, '4H': 1.5, '1H': 1.0}
 JWT_SECRET = os.getenv("JWT_SECRET", "super-secret-key-for-dev")
 JWT_EXPIRE_MINUTES = 60
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@ihqe.io")

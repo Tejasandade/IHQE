@@ -20,7 +20,7 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: ihqe_auth
+      POSTGRES_DB: ihqe_app
       POSTGRES_USER: ihqe
       POSTGRES_PASSWORD: ihqe_secret
     volumes:

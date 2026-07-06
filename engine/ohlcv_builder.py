@@ -16,6 +16,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from config import settings
 from database.clickhouse_client import ClickHouseClient
+from engine.intelligence.mtf_engine import run_intelligence_engine
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +150,10 @@ class OHLCVBuilder:
             batch = rows[i:i + batch_size]
             self.db.insert_ohlcv(timeframe, batch)
             inserted += len(batch)
+            
+        # Trigger intelligence recalculation after new candles are inserted
+        if inserted > 0:
+            run_intelligence_engine()
 
         logger.info(f"  Inserted {inserted:,} {label} candles")
         return inserted

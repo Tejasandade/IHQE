@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from api.routers import ohlcv, signals, cascade, live, backtest, sniper
+from api.routers import ohlcv, signals, cascade, live, backtest, sniper, intelligence
 from api.auth.router import router as auth_router
 from api.auth.database import engine, Base, SessionLocal
 from api.auth.models import User
@@ -75,6 +75,7 @@ app.include_router(ohlcv.router, prefix="/api", tags=["OHLCV"], dependencies=pro
 app.include_router(signals.router, prefix="/api", tags=["Signals"], dependencies=protected)
 app.include_router(cascade.router, prefix="/api", tags=["Cascade"], dependencies=protected)
 app.include_router(sniper.router, prefix="/api/sniper", tags=["Sniper"])
+app.include_router(intelligence.router, prefix="/api/intelligence", tags=["Intelligence"])
 app.include_router(live.router, prefix="/api", tags=["Live"], dependencies=protected)
 app.include_router(backtest.router, prefix="/api", tags=["Backtest"], dependencies=protected)
 
