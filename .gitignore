@@ -1,0 +1,31 @@
+# Byte-compiled
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment
+config/.env
+.env
+venv/
+.venv/
+
+# Data files
+data/
+*.csv
+*.parquet
+
+# Frontend
+node_modules/
+dist/
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
