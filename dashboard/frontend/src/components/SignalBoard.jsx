@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import client from '../api/client';
-import AlignmentGrid from './AlignmentGrid';
 
 const SIGNAL_COLORS = {
   macro_alert: '#B8860B',
@@ -55,7 +54,6 @@ export default function SignalBoard() {
     <div className="signal-board">
       <div className="signal-header">
         <h2>Signal Board</h2>
-        <AlignmentGrid />
         <div className="signal-tabs">
           <button
             className={`tab ${tab === 'active' ? 'active' : ''}`}

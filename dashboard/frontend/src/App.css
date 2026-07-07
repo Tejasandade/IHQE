@@ -1023,3 +1023,7 @@ body {
   flex-direction: column;
   height: 100%;
 }
+
+
+.tz-select { background-color: #1c1c1c; color: #a0a0a0; border: 1px solid #333; border-radius: 4px; padding: 4px 8px; font-size: 12px; cursor: pointer; outline: none; margin-right: 15px; }
+.topbar-tz { display: flex; align-items: center; }

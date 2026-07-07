@@ -8,7 +8,7 @@ services:
       - "9000:9000"
       - "8123:8123"
     volumes:
-      - ./data/clickhouse:/var/lib/clickhouse
+      - clickhouse_data:/var/lib/clickhouse
     ulimits:
       nofile:
         soft: 262144
@@ -40,7 +40,7 @@ services:
       - CH_HTTP_PORT=8123
       - PG_HOST=postgres
       - PG_PORT=5432
-      - PG_DATABASE=ihqe_auth
+      - PG_DATABASE=ihqe_app
       - PG_USER=ihqe
       - PG_PASSWORD=ihqe_secret
     env_file:
@@ -56,3 +56,6 @@ services:
       - "80:80"
     depends_on:
       - api
+
+volumes:
+  clickhouse_data:

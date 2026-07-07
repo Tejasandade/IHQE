@@ -24,7 +24,33 @@ function toUnix(ts) {
   return ts;
 }
 
-export default function ChartPanel({ timeframe, label, onPromote, onExpand }) {
+function getCandleTime(timeframe, timestampMs) {
+  const d = new Date(timestampMs);
+  if (timeframe === '1H') {
+    d.setUTCMinutes(0, 0, 0);
+  } else if (timeframe === '4H') {
+    const h = d.getUTCHours();
+    d.setUTCHours(h - (h % 4), 0, 0, 0);
+  } else if (timeframe === '1M') {
+    d.setUTCDate(1);
+    d.setUTCHours(0, 0, 0, 0);
+  } else if (timeframe === 'W') {
+    const day = d.getUTCDay();
+    const diff = d.getUTCDate() - day + (day === 0 ? -6 : 1);
+    d.setUTCDate(diff);
+    d.setUTCHours(0, 0, 0, 0);
+  } else if (timeframe === '3M') {
+    const m = d.getUTCMonth();
+    d.setUTCMonth(m - (m % 3), 1);
+    d.setUTCHours(0, 0, 0, 0);
+  } else if (timeframe === '12M') {
+    d.setUTCMonth(0, 1);
+    d.setUTCHours(0, 0, 0, 0);
+  }
+  return Math.floor(d.getTime() / 1000);
+}
+
+export default function ChartPanel({ timeframe, label, onPromote, onExpand, livePrice, timezoneMode = 'utc' }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const candleSeriesRef = useRef(null);
@@ -36,6 +62,7 @@ export default function ChartPanel({ timeframe, label, onPromote, onExpand }) {
   const [fibs, setFibs] = useState([]);
   const [bosEvents, setBosEvents] = useState([]);
   const [trades, setTrades] = useState([]);
+  const [dataLoaded, setDataLoaded] = useState(0);
 
   // Initialize chart
   useEffect(() => {
@@ -58,12 +85,38 @@ export default function ChartPanel({ timeframe, label, onPromote, onExpand }) {
         vertLine: { color: COLORS.gold, style: 2, width: 1 },
         horzLine: { color: COLORS.gold, style: 2, width: 1 },
       },
+      localization: {
+        timeFormatter: (time) => {
+          const date = new Date(time * 1000);
+          if (timezoneMode === 'utc') {
+            return date.toISOString().replace('T', ' ').substring(0, 16);
+          } else if (timezoneMode === 'local_12h') {
+            return date.toLocaleString('en-US', { month: 'short', day: 'numeric', year: '2-digit', hour: 'numeric', minute: '2-digit', hour12: true });
+          } else {
+            return date.toLocaleString('en-US', { month: 'short', day: 'numeric', year: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+          }
+        },
+      },
       timeScale: {
+        timeVisible: true,
+        secondsVisible: false,
         borderColor: COLORS.border,
-        timeVisible: timeframe === '4H' || timeframe === '1H' || timeframe === '1M',
+        tickMarkFormatter: (time, tickMarkType, locale) => {
+          const date = new Date(time * 1000);
+          if (timezoneMode === 'utc') {
+            return date.toISOString().replace('T', ' ').substring(5, 16); // MM-DD HH:mm
+          }
+          const formatter = new Intl.DateTimeFormat('en-US', {
+            month: 'short', day: 'numeric',
+            ...(tickMarkType <= 2 ? { year: 'numeric' } : {}),
+            ...(tickMarkType >= 3 ? { hour: 'numeric', minute: '2-digit', hour12: timezoneMode === 'local_12h' } : {})
+          });
+          return formatter.format(date);
+        }
       },
       rightPriceScale: {
         borderColor: COLORS.border,
+        autoScale: true,
       },
     });
 
@@ -79,39 +132,120 @@ export default function ChartPanel({ timeframe, label, onPromote, onExpand }) {
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
 
-    const resizeObserver = new ResizeObserver((entries) => {
-      if (entries.length === 0 || !entries[0].target) return;
-      const { width, height } = entries[0].contentRect;
-      if (width > 0 && height > 0) {
-        chart.applyOptions({ width, height });
-      }
-    });
-    
-    resizeObserver.observe(containerRef.current);
+    const handleResize = () => {
+      chart.applyOptions({
+        width: containerRef.current.clientWidth,
+        height: containerRef.current.clientHeight || 400,
+      });
+    };
+    window.addEventListener('resize', handleResize);
 
     return () => {
-      resizeObserver.disconnect();
+      window.removeEventListener('resize', handleResize);
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
-      overlaySeriesRef.current = [];
-      customPrimitivesRef.current = [];
     };
-  }, [timeframe]);
+  }, [timeframe]); // Intentionally omitting timezoneMode here to avoid full recreate
+
+  // Handle Timezone mode changes dynamically
+  useEffect(() => {
+    if (!chartRef.current) return;
+    
+    chartRef.current.applyOptions({
+      localization: {
+        timeFormatter: (time) => {
+          const date = new Date(time * 1000);
+          if (timezoneMode === 'utc') {
+            return date.toISOString().replace('T', ' ').substring(0, 16);
+          } else if (timezoneMode === 'local_12h') {
+            return date.toLocaleString('en-US', { month: 'short', day: 'numeric', year: '2-digit', hour: 'numeric', minute: '2-digit', hour12: true });
+          } else {
+            return date.toLocaleString('en-US', { month: 'short', day: 'numeric', year: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+          }
+        },
+      },
+      timeScale: {
+        tickMarkFormatter: (time, tickMarkType, locale) => {
+          const date = new Date(time * 1000);
+          if (timezoneMode === 'utc') {
+            return date.toISOString().replace('T', ' ').substring(5, 16);
+          }
+          const formatter = new Intl.DateTimeFormat('en-US', {
+            month: 'short', day: 'numeric',
+            ...(tickMarkType <= 2 ? { year: 'numeric' } : {}),
+            ...(tickMarkType >= 3 ? { hour: 'numeric', minute: '2-digit', hour12: timezoneMode === 'local_12h' } : {})
+          });
+          return formatter.format(date);
+        }
+      }
+    });
+  }, [timezoneMode]);
 
   // Fetch and set OHLCV data
   useEffect(() => {
+    console.log(`[ChartPanel ${timeframe}] Fetching data... candleSeriesRef exists:`, !!candleSeriesRef.current);
     if (!candleSeriesRef.current) return;
 
     client.get(`/ohlcv/${timeframe}`).then((res) => {
+      console.log(`[ChartPanel ${timeframe}] Data received:`, res.data?.length);
       const data = res.data || [];
       if (data.length > 0) {
         ohlcvDataRef.current = data;
-        candleSeriesRef.current.setData(data);
-        chartRef.current.timeScale().fitContent();
+        try {
+          candleSeriesRef.current.setData(data);
+          chartRef.current.timeScale().fitContent();
+          setDataLoaded(prev => prev + 1);
+        } catch(e) {
+          console.error(`[ChartPanel ${timeframe}] Error setting data:`, e);
+        }
       }
-    }).catch(() => {});
+    }).catch((err) => {
+      console.error(`[ChartPanel ${timeframe}] Fetch error:`, err);
+    });
   }, [timeframe]);
+
+  // Handle live price updates
+  useEffect(() => {
+    if (!candleSeriesRef.current || !ohlcvDataRef.current || ohlcvDataRef.current.length === 0 || !livePrice) return;
+    
+    const data = ohlcvDataRef.current;
+    const lastCandle = data[data.length - 1];
+    
+    const nowMs = Date.now();
+    const currentCandleTime = getCandleTime(timeframe, nowMs);
+    
+    if (currentCandleTime > lastCandle.time) {
+      // Create new live candle
+      const newCandle = {
+        time: currentCandleTime,
+        open: lastCandle.close,
+        high: Math.max(lastCandle.close, livePrice.mid),
+        low: Math.min(lastCandle.close, livePrice.mid),
+        close: livePrice.mid,
+      };
+      try {
+        candleSeriesRef.current.update(newCandle);
+        data.push(newCandle);
+      } catch (e) {
+        console.error(`[ChartPanel ${timeframe}] Error adding new live candle:`, e);
+      }
+    } else {
+      // Update existing last candle
+      const updatedCandle = {
+        ...lastCandle,
+        close: livePrice.mid,
+        high: Math.max(lastCandle.high, livePrice.mid),
+        low: Math.min(lastCandle.low, livePrice.mid),
+      };
+      try {
+        candleSeriesRef.current.update(updatedCandle);
+        data[data.length - 1] = updatedCandle;
+      } catch(e) {
+        console.error(`[ChartPanel ${timeframe}] Error updating live price:`, e);
+      }
+    }
+  }, [livePrice, timeframe]);
 
   // Fetch overlays
   useEffect(() => {
@@ -355,7 +489,7 @@ export default function ChartPanel({ timeframe, label, onPromote, onExpand }) {
       candleSeriesRef.current.setMarkers(uniqueMarkers);
     } catch {}
 
-  }, [fibs, fvgs, bosEvents, trades, timeframe]);
+  }, [fibs, fvgs, bosEvents, trades, timeframe, dataLoaded]);
 
   return (
     <div className="chart-panel">

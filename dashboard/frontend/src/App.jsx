@@ -4,6 +4,7 @@ import CascadeStatus from './components/CascadeStatus';
 import SignalBoard from './components/SignalBoard';
 import EquityPanel from './components/EquityPanel';
 import LoginPage from './components/LoginPage';
+import AlignmentGrid from './components/AlignmentGrid';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import useLivePrice from './hooks/useLivePrice';
 import client from './api/client';
@@ -25,11 +26,12 @@ function Dashboard() {
   const [masterTf, setMasterTf] = useState('1M');
   const [expandedTf, setExpandedTf] = useState(null);
   const [cascadeData, setCascadeData] = useState(null);
+  const [tzMode, setTzMode] = useState('utc');
 
   useEffect(() => {
-    client.get('/cascade').then(res => setCascadeData(res.data)).catch(() => {});
+    client.get('/cascade/current').then(res => setCascadeData(res.data)).catch(() => {});
     const interval = setInterval(() => {
-      client.get('/cascade').then(res => setCascadeData(res.data)).catch(() => {});
+      client.get('/cascade/current').then(res => setCascadeData(res.data)).catch(() => {});
     }, 5000);
     return () => clearInterval(interval);
   }, []);
@@ -55,45 +57,43 @@ function Dashboard() {
             <span className="price-value dim">—</span>
           )}
           <span className={`connection-dot ${connected ? 'live' : 'offline'}`} />
-          
           <div className="topbar-status">
-            <span className="gate-count">Gates: {cascadeData?.gates_confirmed || 0}/3</span>
+            <span className="gate-count">
+              Gates: {cascadeData?.swing ? Math.max(
+                cascadeData.swing.filter(g => g.direction === 'bullish' && g.gate_status !== 'waiting').length,
+                cascadeData.swing.filter(g => g.direction === 'bearish' && g.gate_status !== 'waiting').length
+              ) : 0}/3
+            </span>
             {cascadeData?.signal_type && cascadeData.signal_type !== 'NONE' && (
               <span className={`signal-badge ${cascadeData.direction}`}>{cascadeData.signal_type} {cascadeData.direction}</span>
             )}
           </div>
+          <div className="topbar-tz">
+            <select value={tzMode} onChange={(e) => setTzMode(e.target.value)} className="tz-select">
+              <option value="utc">UTC</option>
+              <option value="local_12h">Local (12h)</option>
+              <option value="local_24h">Local (24h)</option>
+            </select>
+          </div>
         </div>
 
         <nav className="topbar-nav">
-          <button
-            className={`nav-btn ${activePanel === 'charts' ? 'active' : ''}`}
-            onClick={() => setActivePanel('charts')}
-          >
-            Charts
-          </button>
-          <button
-            className={`nav-btn ${activePanel === 'cascade' ? 'active' : ''}`}
-            onClick={() => setActivePanel('cascade')}
-          >
-            Cascade
-          </button>
-          <button
-            className={`nav-btn ${activePanel === 'signals' ? 'active' : ''}`}
-            onClick={() => setActivePanel('signals')}
-          >
-            Signals
-          </button>
-          <button
-            className={`nav-btn ${activePanel === 'performance' ? 'active' : ''}`}
-            onClick={() => setActivePanel('performance')}
-          >
-            Performance
-          </button>
+          {['charts', 'cascade', 'signals', 'performance'].map(tab => (
+            <button
+              key={tab}
+              className={`nav-btn ${activePanel === tab ? 'active' : ''}`}
+              onClick={() => setActivePanel(tab)}
+            >
+              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            </button>
+          ))}
+          <button className="nav-btn logout-btn" onClick={logout}>Logout</button>
         </nav>
       </header>
 
-      {/* ─── Main Content ────────────────────────────────────── */}
+      {/* ─── Main Content ──────────────────────────────────────── */}
       <main className="main-content">
+        
         {activePanel === 'charts' && (
           <div className="charts-panel">
             <div className="dashboard-layout">
@@ -102,6 +102,8 @@ function Dashboard() {
                   key={masterTimeframeObj.key}
                   timeframe={masterTimeframeObj.key}
                   label={masterTimeframeObj.label}
+                  livePrice={price}
+                  timezoneMode={tzMode}
                 />
               </div>
               <div className="context-zone">
@@ -112,6 +114,8 @@ function Dashboard() {
                       label={tf.label}
                       onPromote={() => setMasterTf(tf.key)}
                       onExpand={() => setExpandedTf(tf.key)}
+                      livePrice={price}
+                      timezoneMode={tzMode}
                     />
                   </div>
                 ))}
@@ -121,10 +125,12 @@ function Dashboard() {
             {expandedTf && (
               <div className="chart-modal-overlay" onClick={() => setExpandedTf(null)}>
                 <div className="chart-modal-content" onClick={e => e.stopPropagation()}>
-                  <button className="close-modal-btn" onClick={() => setExpandedTf(null)}>×</button>
+                  <button className="close-modal-btn" onClick={() => setExpandedTf(null)}>A-</button>
                   <ChartPanel
                     timeframe={expandedTf}
                     label={ALL_TIMEFRAMES.find(t => t.key === expandedTf)?.label}
+                    livePrice={price}
+                    timezoneMode={tzMode}
                   />
                 </div>
               </div>
@@ -134,6 +140,7 @@ function Dashboard() {
 
         {activePanel === 'cascade' && (
           <div className="cascade-panel">
+            <AlignmentGrid />
             <CascadeStatus />
           </div>
         )}

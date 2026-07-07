@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import apiClient from '../api/client';
-import './AlignmentGrid.css'; // Let's define some styles or use inline
 
 const AlignmentGrid = () => {
   const [data, setData] = useState(null);

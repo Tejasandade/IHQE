@@ -38,9 +38,9 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 # ── Timeframe definitions ─────────────────────────────────────────────────────
 # Keys are used as canonical identifiers throughout the entire codebase
 TIMEFRAMES = {
-    "12M":  {"label": "12-Month",  "dukascopy_interval": "mn1",  "resample_rule": "YE"},
-    "3M":   {"label": "3-Month",   "dukascopy_interval": "mn1",  "resample_rule": "QE"},
-    "1M":   {"label": "1-Month",   "dukascopy_interval": "mn1",  "resample_rule": "ME"},
+    "12M":  {"label": "12-Month",  "dukascopy_interval": "mn1",  "resample_rule": "Y"},
+    "3M":   {"label": "3-Month",   "dukascopy_interval": "mn1",  "resample_rule": "Q"},
+    "1M":   {"label": "1-Month",   "dukascopy_interval": "mn1",  "resample_rule": "M"},
     "W":    {"label": "Weekly",    "dukascopy_interval": "w1",   "resample_rule": "W-MON"},
     "4H":   {"label": "4-Hour",    "dukascopy_interval": "h4",   "resample_rule": "4h"},
     "1H":   {"label": "1-Hour",    "dukascopy_interval": "h1",   "resample_rule": "1h"},

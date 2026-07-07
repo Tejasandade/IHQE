@@ -20,10 +20,10 @@ class MTFIntelligenceEngine:
         query = """
         SELECT (bid + ask) / 2 AS mid_price 
         FROM ihqe.xauusd_ticks 
-        ORDER BY timestamp DESC 
+        ORDER BY ts DESC 
         LIMIT 1
         """
-        result = db.client.query_df(query)
+        result = db.query_df(query)
         if result.empty:
             return 0.0
         return float(result.iloc[0]['mid_price'])
@@ -39,11 +39,11 @@ class MTFIntelligenceEngine:
         
         # Get the most recent active BOS
         latest_bos = bos_df.iloc[-1]
-        bos_type = latest_bos.get("type", "").lower()
-        if not bos_type:
+        bos_dir = latest_bos.get("direction", "").lower()
+        if not bos_dir:
             return 0
             
-        is_bullish = "bullish" in bos_type
+        is_bullish = "bullish" in bos_dir or "long" in bos_dir
         
         # 2. Get active Fib Grid to find 0.5 level
         fib_df = db.get_fib_grids(timeframe, active_only=True)
@@ -52,7 +52,7 @@ class MTFIntelligenceEngine:
             return 1 if is_bullish else -1
             
         latest_grid = fib_df.iloc[-1]
-        level_0_5 = latest_grid.get("level_0_5", 0.0)
+        level_0_5 = latest_grid.get("level_0_500", 0.0)
         
         if level_0_5 == 0.0:
             return 1 if is_bullish else -1
@@ -65,7 +65,7 @@ class MTFIntelligenceEngine:
                 # Need unmitigated bullish FVG in the zone
                 if not fvg_df.empty:
                     # Filter for active bullish FVGs
-                    unmit_bullish = fvg_df[(fvg_df['type'] == 'BULLISH') & (fvg_df['is_mitigated'] == False)]
+                    unmit_bullish = fvg_df[(fvg_df['direction'] == 'bullish') & (fvg_df['is_mitigated'] == False)]
                     if not unmit_bullish.empty:
                         return 2
                 return 1
@@ -75,7 +75,7 @@ class MTFIntelligenceEngine:
             if current_price > level_0_5:
                 # Need unmitigated bearish FVG in the zone
                 if not fvg_df.empty:
-                    unmit_bearish = fvg_df[(fvg_df['type'] == 'BEARISH') & (fvg_df['is_mitigated'] == False)]
+                    unmit_bearish = fvg_df[(fvg_df['direction'] == 'bearish') & (fvg_df['is_mitigated'] == False)]
                     if not unmit_bearish.empty:
                         return -2
                 return -1

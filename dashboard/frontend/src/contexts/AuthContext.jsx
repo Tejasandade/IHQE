@@ -10,14 +10,13 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Apply interceptors
+  // Apply token to client defaults immediately when it changes
   useEffect(() => {
-    const reqInterceptor = client.interceptors.request.use(config => {
-      if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
-      }
-      return config;
-    });
+    if (token) {
+      client.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    } else {
+      delete client.defaults.headers.common['Authorization'];
+    }
 
     const resInterceptor = client.interceptors.response.use(
       response => response,
@@ -30,7 +29,6 @@ export const AuthProvider = ({ children }) => {
     );
 
     return () => {
-      client.interceptors.request.eject(reqInterceptor);
       client.interceptors.response.eject(resInterceptor);
     };
   }, [token]);

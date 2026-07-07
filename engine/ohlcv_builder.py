@@ -12,6 +12,7 @@ from typing import Optional
 
 import pandas as pd
 import numpy as np
+import requests
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from config import settings
@@ -151,9 +152,14 @@ class OHLCVBuilder:
             self.db.insert_ohlcv(timeframe, batch)
             inserted += len(batch)
             
-        # Trigger intelligence recalculation after new candles are inserted
+        # Trigger intelligence recalculation and cache refresh after new candles are inserted
         if inserted > 0:
             run_intelligence_engine()
+            try:
+                requests.post("http://localhost:8000/api/internal/refresh-cache", timeout=2)
+                logger.info("Triggered SniperEngine cache refresh via API")
+            except Exception as e:
+                logger.warning(f"Could not trigger cache refresh: {e}")
 
         logger.info(f"  Inserted {inserted:,} {label} candles")
         return inserted

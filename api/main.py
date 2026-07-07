@@ -24,6 +24,8 @@ from api.auth.security import get_password_hash
 from api.auth.middleware import get_current_user
 from config.settings import ADMIN_EMAIL, ADMIN_PASSWORD
 from fastapi import Depends
+import asyncio
+from ingestion.tiingo_client import start_tiingo_client
 
 logging.basicConfig(
     level=logging.INFO,
@@ -65,9 +67,12 @@ def startup_event():
             logging.info(f"Created default admin user: {ADMIN_EMAIL}")
     finally:
         db.close()
+        
+    # Start Tiingo background client
+    asyncio.create_task(start_tiingo_client())
 
 # Mount auth router (public)
-app.include_router(auth_router.router, prefix="/api/auth", tags=["Auth"])
+app.include_router(auth_router, prefix="/api/auth", tags=["Auth"])
 
 # Mount protected routers
 protected = [Depends(get_current_user)]
@@ -76,7 +81,7 @@ app.include_router(signals.router, prefix="/api", tags=["Signals"], dependencies
 app.include_router(cascade.router, prefix="/api", tags=["Cascade"], dependencies=protected)
 app.include_router(sniper.router, prefix="/api/sniper", tags=["Sniper"])
 app.include_router(intelligence.router, prefix="/api/intelligence", tags=["Intelligence"])
-app.include_router(live.router, prefix="/api", tags=["Live"], dependencies=protected)
+app.include_router(live.router, prefix="/api", tags=["Live"])
 app.include_router(backtest.router, prefix="/api", tags=["Backtest"], dependencies=protected)
 
 
