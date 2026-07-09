@@ -94,6 +94,22 @@ class FVGDetector:
             in_zone = self._is_fvg_in_zone(
                 fvg, zone_upper, zone_lower, direction
             )
+            
+            if not in_zone:
+                # TEMPORARY DEBUG LOGGING FOR REJECTIONS
+                gap_top = fvg["gap_top"]
+                gap_bottom = fvg["gap_bottom"]
+                
+                dist_upper = max(0, gap_bottom - zone_upper) if direction == 'bullish' else max(0, gap_top - zone_upper)
+                dist_lower = max(0, zone_lower - gap_top) if direction == 'bullish' else max(0, zone_lower - gap_bottom)
+                
+                # A more precise absolute distance from the boundaries
+                if direction == 'bullish':
+                    dist = min(abs(gap_bottom - zone_lower), abs(gap_top - zone_upper))
+                else:
+                    dist = min(abs(gap_top - zone_upper), abs(gap_bottom - zone_lower))
+                    
+                logger.info(f"REJECTED FVG ({direction}) | Gap: [{gap_bottom:.2f} - {gap_top:.2f}] | Zone: [{zone_lower:.2f} - {zone_upper:.2f}] | Missed zone by approx ${dist:.2f}")
 
             if in_zone:
                 fvg["parent_fvg_id"] = parent_fvg_id
@@ -124,15 +140,59 @@ class FVGDetector:
         gap_top = fvg["gap_top"]
         gap_bottom = fvg["gap_bottom"]
 
-        # The FVG's midpoint must be inside the zone,
-        # and at least part of the gap must overlap with the zone
+        # Add a 0.3% proximity buffer for optimal performance
+        buffer = zone_upper * 0.003
+
         if direction == "bullish":
             # FVG should be in the discount area (below zone_upper)
-            return gap_bottom >= zone_lower and gap_top <= zone_upper
+            return gap_bottom >= (zone_lower - buffer) and gap_top <= (zone_upper + buffer)
         elif direction == "bearish":
             # FVG should be in the premium area (above zone_lower)
-            return gap_bottom >= zone_lower and gap_top <= zone_upper
+            return gap_bottom >= (zone_lower - buffer) and gap_top <= (zone_upper + buffer)
         return False
+
+    def filter_fvg_dataframe(
+        self,
+        df: pd.DataFrame,
+        zone_lower: float,
+        zone_upper: float,
+        direction: str,
+        buffer_pct: float = 0.005,
+    ) -> pd.DataFrame:
+        """
+        Vectorized filter applying the exact same logic as _is_fvg_in_zone.
+        Expects a DataFrame with 'top' and 'bottom' columns.
+        """
+        buffer = zone_upper * buffer_pct
+        
+        # In IHQE FVG data structures: top is gap_top, bottom is gap_bottom
+        if direction in ["bullish", "bearish"]:
+            return df[
+                (df["bottom"] >= (zone_lower - buffer)) & 
+                (df["top"] <= (zone_upper + buffer))
+            ]
+            
+        return df.iloc[0:0]  # Empty DataFrame if invalid direction
+
+    def get_fvg_zone_mask(
+        self,
+        bottom_arr: np.ndarray,
+        top_arr: np.ndarray,
+        zone_lower: float,
+        zone_upper: float,
+        direction: str,
+        buffer_pct: float = 0.005,
+    ) -> np.ndarray:
+        """
+        Numpy vectorized filter applying the exact same logic as _is_fvg_in_zone.
+        Returns a boolean mask.
+        """
+        buffer = zone_upper * buffer_pct
+        
+        if direction in ["bullish", "bearish"]:
+            return (bottom_arr >= (zone_lower - buffer)) & (top_arr <= (zone_upper + buffer))
+            
+        return np.zeros_like(bottom_arr, dtype=bool)
 
     def _detect_raw(
         self,

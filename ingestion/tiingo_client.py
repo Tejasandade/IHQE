@@ -15,6 +15,13 @@ from engine.sniper.core import sniper_engine
 
 logger = logging.getLogger(__name__)
 
+# Global status for health checks
+tiingo_status = {
+    "connected": False,
+    "last_tick_timestamp": None,
+    "reconnect_attempts": 0
+}
+
 class TiingoLiveClient:
     def __init__(self):
         self.url = settings.TIINGO_WS_URL
@@ -34,12 +41,16 @@ class TiingoLiveClient:
 
         reconnect_delay = 1
         max_delay = 60
+        consecutive_successes = 0
+        reconnect_attempts = 0
+        disconnect_time = None
 
         while True:
             try:
                 logger.info(f"Connecting to Tiingo WS: {self.url}")
                 async with websockets.connect(self.url) as ws:
-                    reconnect_delay = 1  # reset delay on successful connect
+                    tiingo_status["connected"] = True
+                    # Do NOT reset reconnect_delay yet. We wait for 3 consecutive successes.
                     
                     # Send subscribe payload
                     subscribe = {
@@ -56,15 +67,46 @@ class TiingoLiveClient:
                     # Also refresh the cache on startup
                     await sniper_engine.refresh_cache()
 
-                    async for message in ws:
-                        await self.handle_message(message)
-                        
+                    while True:
+                        try:
+                            # 30-second heartbeat monitor
+                            message = await asyncio.wait_for(ws.recv(), timeout=30.0)
+                            await self.handle_message(message)
+                            
+                            consecutive_successes += 1
+                            if consecutive_successes == 3:
+                                if disconnect_time is not None:
+                                    import time
+                                    seconds = int(time.time() - disconnect_time)
+                                    from alerts.telegram_bot import send_telegram_alert
+                                    msg = f"🔌 IHQE — Connection Restored | Reconnected after {seconds}s | Backoff attempts: {reconnect_attempts}"
+                                    send_telegram_alert("tiingo_reconnect", msg)
+                                    
+                                reconnect_delay = 1
+                                disconnect_time = None
+                                reconnect_attempts = 0
+                                tiingo_status["reconnect_attempts"] = 0
+                                
+                        except asyncio.TimeoutError:
+                            logger.error("Tiingo WS Heartbeat Timeout (30s) - no data received. Forcing reconnect.")
+                            # Break the inner while loop to force the connection to close and reconnect
+                            break
+                    
             except websockets.exceptions.ConnectionClosed as e:
-                logger.error(f"Tiingo WS Closed: {e}")
-            except Exception as e:
-                logger.error(f"Tiingo WS Error: {e}")
+                logger.warning(f"Tiingo WS connection closed: {e}")
+                tiingo_status["connected"] = False
                 
-            logger.info(f"Reconnecting Tiingo WS in {reconnect_delay} seconds...")
+            except Exception as e:
+                logger.error(f"Tiingo connection error: {e}")
+                tiingo_status["connected"] = False
+                
+            # Reconnection logic
+            consecutive_successes = 0
+            if disconnect_time is None:
+                disconnect_time = time.time()
+            reconnect_attempts += 1
+            tiingo_status["reconnect_attempts"] = reconnect_attempts
+            logger.info(f"Attempting to reconnect in {reconnect_delay} seconds (attempt {reconnect_attempts})...")
             await asyncio.sleep(reconnect_delay)
             reconnect_delay = min(reconnect_delay * 2, max_delay)
 
@@ -89,6 +131,7 @@ class TiingoLiveClient:
                     # 2. Add to ClickHouse batch
                     # Parse timestamp (Tiingo uses ISO8601 with Z)
                     ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00")).replace(tzinfo=None)
+                    tiingo_status["last_tick_timestamp"] = ts.isoformat() + "Z"
                     
                     self.tick_batch.append({
                         "ts": ts,

@@ -79,3 +79,40 @@ def get_trades(
         return _sanitize_records(df)
     finally:
         db.close()
+
+
+@router.get("/history/fvg/{timeframe}")
+def get_fvg_history(timeframe: str):
+    db = get_db()
+    try:
+        df = db.query_df(f"SELECT * FROM ihqe.fvg_events WHERE timeframe = '{timeframe}'")
+        return _sanitize_records(df) if not df.empty else []
+    except Exception as e:
+        print(f"FVG fetch error: {e}")
+        return []
+    finally:
+        db.close()
+
+@router.get("/history/fib/{timeframe}")
+def get_fib_history(timeframe: str):
+    db = get_db()
+    try:
+        df = db.query_df(f"SELECT * FROM ihqe.fib_grids WHERE timeframe = '{timeframe}'")
+        return _sanitize_records(df) if not df.empty else []
+    except Exception as e:
+        print(f"Fib fetch error: {e}")
+        return []
+    finally:
+        db.close()
+
+@router.get("/history/bos/{timeframe}")
+def get_bos_history(timeframe: str):
+    db = get_db()
+    try:
+        df = db.query_df(f"SELECT * FROM ihqe.bos_events WHERE timeframe = '{timeframe}'")
+        return _sanitize_records(df) if not df.empty else []
+    except Exception as e:
+        print(f"BOS fetch error: {e}")
+        return []
+    finally:
+        db.close()

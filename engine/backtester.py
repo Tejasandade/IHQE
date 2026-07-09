@@ -172,8 +172,12 @@ class Backtester:
             zone_upper = grid["level_0_000"]
             zone_lower = grid["level_0_500"]
             
-        # Vectorized check
-        mask = (data["ts3"] <= ts_val) & (data["mitigated"] > ts_val) & (data["bottom"] >= zone_lower) & (data["top"] <= zone_upper)
+        # Vectorized check using fvg_detector's synchronized logic
+        time_mask = (data["ts3"] <= ts_val) & (data["mitigated"] > ts_val)
+        zone_mask = self.fvg_detector.get_fvg_zone_mask(
+            data["bottom"], data["top"], zone_lower, zone_upper, direction, buffer_pct=0.003
+        )
+        mask = time_mask & zone_mask
         valid_indices = np.where(mask)[0]
         
         zone_fvgs = []
@@ -258,6 +262,44 @@ class Backtester:
             for cascade_name, tfs in self.cascades.items():
                 for direction in ["bullish", "bearish"]:
                     trade_dir = "long" if direction == "bullish" else "short"
+                    
+                    if cascade_name == "scalp":
+                        bos_bull = self.get_active_bos("12M", "bullish", current_ts)
+                        bos_bear = self.get_active_bos("12M", "bearish", current_ts)
+                        
+                        ts_bull = bos_bull["bos_candle_ts_pd"] if bos_bull else pd.Timestamp.min.tz_localize('UTC')
+                        ts_bear = bos_bear["bos_candle_ts_pd"] if bos_bear else pd.Timestamp.min.tz_localize('UTC')
+                        
+                        macro_bias = 0
+                        if ts_bull > ts_bear:
+                            macro_bias = 1
+                        elif ts_bear > ts_bull:
+                            macro_bias = -1
+                            
+                        if macro_bias == 1 and trade_dir == "short":
+                            continue
+                        if macro_bias == -1 and trade_dir == "long":
+                            continue
+                            
+                        # Gate Scalp by 3M Cascade (>= 2 gates confirmed)
+                        # The scalp direction matches the 3M cascade direction for continuation, 
+                        # or opposes it for path. For simplicity, we require AT LEAST ONE 
+                        # direction of the 3M cascade to be active (>= 2 gates).
+                        mid_bos_bull = self.get_active_bos("3M", "bullish", current_ts)
+                        mid_bos_bear = self.get_active_bos("3M", "bearish", current_ts)
+                        
+                        swing_active = False
+                        if mid_bos_bull:
+                            g_bull = self.build_grid(mid_bos_bull)
+                            if self.detect_fvgs("1M", "bullish", g_bull, current_ts):
+                                swing_active = True
+                        if mid_bos_bear:
+                            g_bear = self.build_grid(mid_bos_bear)
+                            if self.detect_fvgs("1M", "bearish", g_bear, current_ts):
+                                swing_active = True
+                                
+                        if not swing_active:
+                            continue
                     
                     # Gate 1: Anchor BOS
                     tf1 = tfs[0]
@@ -392,12 +434,28 @@ class Backtester:
             avg_rr = np.mean([t["rr_ratio"] for t in closed]) if closed else 0
             total_pnl = sum(t["pnl_pct"] for t in closed)
             
+            max_dd = 0.0
+            if closed:
+                equity = 100.0
+                peak = 100.0
+                for t in closed:
+                    equity += t["pnl_pct"]
+                    if equity > peak:
+                        peak = equity
+                    dd = (equity - peak) / peak * 100
+                    if dd < max_dd:
+                        max_dd = dd
+                        
             print(f"[{cname.upper()} CASCADE]")
             print(f"  Total Trades: {len(c_trades)}")
             print(f"  Closed: {len(closed)} (Wins: {len(wins)}, Losses: {len(losses)})")
             print(f"  Win Rate: {win_rate:.1f}%")
             print(f"  Avg R:R: {avg_rr:.2f}")
+            print(f"  Max Drawdown: {max_dd:.2f}%")
             print(f"  Total Return: {total_pnl:.2f}%\n")
+            
+            if cname == "scalp":
+                print(f"=== BACKTEST COMPLETE === Trades: {len(c_trades)} | Win Rate: {win_rate:.1f}% | Avg R:R: {avg_rr:.2f} | Max DD: {max_dd:.2f}% | Return: {total_pnl:.2f}% | Buffer: 0.3% ===")
 
 
 if __name__ == "__main__":

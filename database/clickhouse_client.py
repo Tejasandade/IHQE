@@ -246,7 +246,7 @@ class ClickHouseClient:
 
     def get_bos_events(
         self, timeframe: str, direction: Optional[str] = None,
-        active_only: bool = False
+        active_only: bool = False, as_of_ts: Optional[datetime] = None
     ) -> pd.DataFrame:
         """Retrieve BOS events for a timeframe."""
         conditions = ["timeframe = %(tf)s"]
@@ -256,6 +256,9 @@ class ClickHouseClient:
             params["dir"] = direction
         if active_only:
             conditions.append("is_active = 1")
+        if as_of_ts:
+            conditions.append("bos_candle_ts <= %(as_of_ts)s")
+            params["as_of_ts"] = as_of_ts
 
         where = " AND ".join(conditions)
         sql = f"SELECT * FROM ihqe.bos_events FINAL WHERE {where} ORDER BY bos_candle_ts"
@@ -318,7 +321,8 @@ class ClickHouseClient:
         return self._execute_with_retry("insert_fvg_events", _run)
 
     def get_fvg_events(
-        self, timeframe: str, direction: Optional[str] = None
+        self, timeframe: str, direction: Optional[str] = None,
+        as_of_ts: Optional[datetime] = None
     ) -> pd.DataFrame:
         """Retrieve FVG events for a timeframe."""
         conditions = ["timeframe = %(tf)s"]
@@ -326,6 +330,9 @@ class ClickHouseClient:
         if direction:
             conditions.append("direction = %(dir)s")
             params["dir"] = direction
+        if as_of_ts:
+            conditions.append("ts_candle3 <= %(as_of_ts)s")
+            params["as_of_ts"] = as_of_ts
 
         where = " AND ".join(conditions)
         sql = f"SELECT * FROM ihqe.fvg_events FINAL WHERE {where} ORDER BY ts_candle1"
@@ -389,6 +396,7 @@ class ClickHouseClient:
         timeframe: str,
         direction: Optional[str] = None,
         active_only: bool = False,
+        as_of_ts: Optional[datetime] = None
     ) -> pd.DataFrame:
         """Retrieve Fibonacci grids for a timeframe."""
         conditions = ["timeframe = %(tf)s"]
@@ -398,6 +406,10 @@ class ClickHouseClient:
             params["dir"] = direction
         if active_only:
             conditions.append("is_active = 1")
+        if as_of_ts:
+            conditions.append("swing_low_ts <= %(as_of_ts)s")
+            conditions.append("swing_high_ts <= %(as_of_ts)s")
+            params["as_of_ts"] = as_of_ts
 
         where = " AND ".join(conditions)
         sql = f"SELECT * FROM ihqe.fib_grids FINAL WHERE {where} ORDER BY swing_low_ts"
@@ -446,7 +458,8 @@ class ClickHouseClient:
         return self._execute_with_retry("insert_cascade_states", _run)
 
     def get_cascade_states(
-        self, layer: Optional[str] = None, direction: Optional[str] = None
+        self, layer: Optional[str] = None, direction: Optional[str] = None,
+        as_of_ts: Optional[datetime] = None
     ) -> pd.DataFrame:
         """Retrieve cascade states, optionally filtered by layer and direction."""
         conditions = []
@@ -457,9 +470,12 @@ class ClickHouseClient:
         if direction:
             conditions.append("direction = %(dir)s")
             params["dir"] = direction
+        if as_of_ts:
+            conditions.append("ts_updated <= %(as_of_ts)s")
+            params["as_of_ts"] = as_of_ts
 
         where = " AND ".join(conditions) if conditions else "1=1"
-        sql = f"SELECT * FROM ihqe.cascade_states WHERE {where} ORDER BY ts_updated DESC"
+        sql = f"SELECT * FROM ihqe.cascade_states WHERE {where} ORDER BY ts_updated DESC LIMIT 1 BY cascade_type, direction, timeframe"
         return self.query_df(sql, params)
 
     def clear_cascade_states(self) -> None:

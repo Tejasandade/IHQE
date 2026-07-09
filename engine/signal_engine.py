@@ -34,28 +34,35 @@ class SignalEngine:
     """
 
     def classify_swing(
-        self, gates_confirmed: int, price_in_1m_zone: bool = False
+        self, gates_confirmed: int, price_in_1m_zone: bool = False, is_12m_aligned: bool = False
     ) -> Optional[str]:
         """
         Classify a swing signal based on gate count and zone status.
 
         Args:
-            gates_confirmed: Number of confirmed gates (0-3)
+            gates_confirmed: Number of confirmed gates for 3M cascade (0-2)
             price_in_1m_zone: Whether price is inside the 1M discount/premium zone
+            is_12m_aligned: Whether the 12M macro gate is also aligned
 
         Returns:
             Signal type string or None
         """
-        if price_in_1m_zone and gates_confirmed == 3:
+        if price_in_1m_zone and gates_confirmed == 2:
             return "execute"
 
         levels = {
             0: None,
-            1: "macro_alert",    # 12M BOS confirmed
-            2: "mid_alert",      # 12M zone + 3M FVG confirmed
-            3: "active",         # All 3 gates confirmed
+            1: "mid_alert",      # 3M BOS confirmed
+            2: "active",         # 3M BOS + 1M FVG confirmed
         }
-        return levels.get(gates_confirmed)
+        
+        base_signal = levels.get(gates_confirmed)
+        
+        # Upgrade Mid or Active if 12M is aligned
+        if base_signal in ["mid_alert", "active"] and is_12m_aligned:
+            return "strong_long" if base_signal == "active" else "strong_alert"
+            
+        return base_signal
 
     def classify_scalp(
         self, scalp_type: str, gates_confirmed: int
@@ -101,9 +108,10 @@ class SignalEngine:
             scalp_results = dir_results.get("scalp", [])
             gates_confirmed = dir_results.get("gates_confirmed", 0)
             entry_valid = dir_results.get("entry_valid", False)
+            is_12m_aligned = dir_results.get("12m_aligned", False)
 
             # ── Swing Signal ──────────────────────────────────────────
-            signal_type = self.classify_swing(gates_confirmed, entry_valid)
+            signal_type = self.classify_swing(gates_confirmed, entry_valid, is_12m_aligned)
             if signal_type:
                 trade_direction = "long" if direction == "bullish" else "short"
 
@@ -139,18 +147,62 @@ class SignalEngine:
                 }
                 signals.append(signal)
 
+                if signal_type == "execute":
+                    from alerts.telegram_bot import send_telegram_alert
+                    # Calculate dummy R:R for now since we just have a zone
+                    # Assuming target_upper and target_lower are TP and SL depending on direction
+                    tp = target_upper if trade_direction == "bullish" else target_lower
+                    sl = target_lower if trade_direction == "bullish" else target_upper
+                    entry = (tp + sl) / 2
+                    try:
+                        ratio = abs(tp - entry) / abs(entry - sl) if abs(entry - sl) > 0 else 0
+                    except ZeroDivisionError:
+                        ratio = 0.0
+                    msg = (
+                        f"🚨 IHQE — EXECUTE SIGNAL | Direction: {trade_direction} | "
+                        f"Entry: {entry:.2f} | SL: {sl:.2f} | TP: {tp:.2f} | R:R: {ratio:.2f}"
+                    )
+                    send_telegram_alert(f"execute_{trade_direction}", msg)
+
                 print(f"  {signal_type.upper():>12s} | {trade_direction:>5s} | "
                       f"Gates: {gates_confirmed}/3 | "
                       f"Zone: ${target_lower:.2f} - ${target_upper:.2f}")
+                    
+                # Handle Telegram Alerts for Upgraded Signals
+                if signal_type in ["strong_long", "strong_alert"]:
+                    from alerts.telegram_bot import send_telegram_alert
+                    import asyncio
+                    
+                    trade_str = "STRONG LONG" if trade_direction == "long" else "STRONG SHORT"
+                    base_str = "Active" if signal_type == "strong_long" else "Mid"
+                    # Default composite score to 0 for now since engine might not provide it directly here
+                    composite = 0
+                    
+                    msg = f"📈 IHQE — Signal Upgraded | 3M setup → {trade_str} | Upgraded by: 12M gate alignment | Score: {composite}"
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(send_telegram_alert(msg))
+                    except RuntimeError:
+                        asyncio.run(send_telegram_alert(msg))
 
             # ── Scalp Signals ──────────────────────────────────────────
+            macro_bias = cascade_results.get("12m_macro_bias", 0)
             for scalp in scalp_results:
+                trade_direction = scalp["direction"]
+                trade_dir_long = "long" if trade_direction == "bullish" else "short"
+                
+                # Apply 12M Macro Direction Filter
+                if macro_bias == 1 and trade_dir_long == "short":
+                    continue
+                if macro_bias == -1 and trade_dir_long == "long":
+                    continue
+                
                 scalp_type = scalp.get("scalp_type", "")
                 scalp_signal = {
                     "signal_id": str(uuid.uuid4()),
                     "signal_type": scalp_type,
                     "trade_type": scalp_type,
-                    "direction": scalp["direction"],
+                    "direction": trade_direction,
                     "gates_confirmed": gates_confirmed,
                     "target_upper": scalp["entry_price"],
                     "target_lower": scalp["stop_loss"],

@@ -2,7 +2,9 @@ import os
 import sys
 import json
 from datetime import datetime
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
+import logging
+from pydantic import ValidationError
 
 # Ensure we can import from top level
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -10,74 +12,97 @@ from database.clickhouse_client import ClickHouseClient
 from config.settings import INTELLIGENCE_WEIGHTS
 from api.auth.database import SessionLocal
 from api.models import Signal
+from engine.models import BosEvent, FibGrid, FvgEvent, PriceState
+
+logger = logging.getLogger(__name__)
 
 class MTFIntelligenceEngine:
     def __init__(self):
         self.timeframes = ['12M', '3M', '1M', '4H', '1H']
         
-    def get_current_price(self, db: ClickHouseClient) -> float:
+    def get_current_price(self, db: ClickHouseClient, as_of_ts: Optional[datetime] = None) -> Optional[PriceState]:
         """Fetch the most recent mid price from xauusd_ticks."""
-        query = """
-        SELECT (bid + ask) / 2 AS mid_price 
+        where_clause = ""
+        params = {}
+        if as_of_ts:
+            where_clause = "WHERE ts <= %(as_of_ts)s"
+            params["as_of_ts"] = as_of_ts
+            
+        query = f"""
+        SELECT (bid + ask) / 2 AS mid, bid, ask, ts AS timestamp
         FROM ihqe.xauusd_ticks 
+        {where_clause}
         ORDER BY ts DESC 
         LIMIT 1
         """
-        result = db.query_df(query)
+        result = db.query_df(query, params)
         if result.empty:
-            return 0.0
-        return float(result.iloc[0]['mid_price'])
+            return None
+        try:
+            return PriceState.model_validate(result.iloc[0].to_dict())
+        except ValidationError as e:
+            logger.error(f"PriceState ValidationError: {e}")
+            return None
 
-    def calculate_tf_bias(self, timeframe: str, current_price: float, db: ClickHouseClient) -> int:
+    def calculate_tf_bias(self, timeframe: str, current_price: float, db: ClickHouseClient, as_of_ts: Optional[datetime] = None) -> int:
         """
         Calculate bias (-2 to +2) for a given timeframe based on ClickHouse state.
         """
         # 1. Check for active confirmed BOS
-        bos_df = db.get_bos_events(timeframe, active_only=True)
+        bos_df = db.get_bos_events(timeframe, active_only=True, as_of_ts=as_of_ts)
         if bos_df.empty:
             return 0
         
-        # Get the most recent active BOS
-        latest_bos = bos_df.iloc[-1]
-        bos_dir = latest_bos.get("direction", "").lower()
+        try:
+            latest_bos = BosEvent.model_validate(bos_df.iloc[-1].to_dict())
+        except ValidationError as e:
+            logger.error(f"BosEvent ValidationError for {timeframe}: {e}")
+            return 0
+            
+        bos_dir = latest_bos.direction.lower()
         if not bos_dir:
             return 0
             
         is_bullish = "bullish" in bos_dir or "long" in bos_dir
         
         # 2. Get active Fib Grid to find 0.5 level
-        fib_df = db.get_fib_grids(timeframe, active_only=True)
+        fib_df = db.get_fib_grids(timeframe, active_only=True, as_of_ts=as_of_ts)
         if fib_df.empty:
-            # If no active grid, we default to +1 or -1 based on BOS direction
             return 1 if is_bullish else -1
             
-        latest_grid = fib_df.iloc[-1]
-        level_0_5 = latest_grid.get("level_0_500", 0.0)
+        try:
+            latest_grid = FibGrid.model_validate(fib_df.iloc[-1].to_dict())
+        except ValidationError as e:
+            logger.error(f"FibGrid ValidationError for {timeframe}: {e}")
+            return 0
+            
+        level_0_5 = latest_grid.level_0_500
         
         if level_0_5 == 0.0:
             return 1 if is_bullish else -1
             
         # 3. Get FVGs
-        fvg_df = db.get_fvg_events(timeframe)
-        
+        fvg_df = db.get_fvg_events(timeframe, as_of_ts=as_of_ts)
+        valid_fvgs = []
+        for r in fvg_df.to_dict('records'):
+            try:
+                valid_fvgs.append(FvgEvent.model_validate(r))
+            except ValidationError as e:
+                logger.error(f"FvgEvent ValidationError for {timeframe}: {e}")
+                
         if is_bullish:
             if current_price < level_0_5:
-                # Need unmitigated bullish FVG in the zone
-                if not fvg_df.empty:
-                    # Filter for active bullish FVGs
-                    unmit_bullish = fvg_df[(fvg_df['direction'] == 'bullish') & (fvg_df['is_mitigated'] == False)]
-                    if not unmit_bullish.empty:
-                        return 2
+                unmit_bullish = [f for f in valid_fvgs if f.direction.lower() == 'bullish' and not f.is_mitigated]
+                if unmit_bullish:
+                    return 2
                 return 1
             else:
                 return 1
         else:
             if current_price > level_0_5:
-                # Need unmitigated bearish FVG in the zone
-                if not fvg_df.empty:
-                    unmit_bearish = fvg_df[(fvg_df['direction'] == 'bearish') & (fvg_df['is_mitigated'] == False)]
-                    if not unmit_bearish.empty:
-                        return -2
+                unmit_bearish = [f for f in valid_fvgs if f.direction.lower() == 'bearish' and not f.is_mitigated]
+                if unmit_bearish:
+                    return -2
                 return -1
             else:
                 return -1
@@ -90,7 +115,7 @@ class MTFIntelligenceEngine:
             score += bias * weight
         return score
 
-    def evaluate_signals(self, composite_score: float, biases: Dict[str, int]):
+    def evaluate_signals(self, composite_score: float, biases: Dict[str, int], current_price: float = 0.0):
         """Evaluate thresholds and conflict rule, and store in PostgreSQL if necessary."""
         signal_type = None
         
@@ -122,10 +147,25 @@ class MTFIntelligenceEngine:
         # It's cleaner to store them as separate rows or combine them. We'll store separate.
         
         events_to_store = []
+        
+        from alerts.telegram_bot import send_telegram_alert
+        
         if signal_type:
             events_to_store.append((signal_type, composite_score))
+            msg = (
+                f"📊 IHQE — Score Alert | Score: {composite_score} ({signal_type}) | "
+                f"12M: {biases.get('12M', 0)} | 3M: {biases.get('3M', 0)} | "
+                f"1M: {biases.get('1M', 0)} | 4H: {biases.get('4H', 0)} | 1H: {biases.get('1H', 0)}"
+            )
+            send_telegram_alert(f"score_{signal_type}", msg)
+            
         if path_scalp:
             events_to_store.append(("Path Scalp", composite_score))
+            msg = (
+                f"⚡ IHQE — Path Scalp | 12M: {bias_12m} vs 3M: {bias_3m} | "
+                f"Counter-trend opportunity | Current price: {current_price}"
+            )
+            send_telegram_alert("path_scalp", msg)
             
         if events_to_store:
             self._store_signals(events_to_store, biases)
@@ -148,23 +188,25 @@ class MTFIntelligenceEngine:
         finally:
             db.close()
 
-    def run(self) -> Dict[str, Any]:
+    def run(self, as_of_ts: Optional[datetime] = None) -> Dict[str, Any]:
         """Main execution method."""
         db = ClickHouseClient()
         try:
-            current_price = self.get_current_price(db)
-            if current_price == 0.0:
+            current_price_state = self.get_current_price(db, as_of_ts=as_of_ts)
+            if not current_price_state:
                 # No ticks available
                 return {"composite_score": 0.0, "biases": {tf: 0 for tf in self.timeframes}, "path_scalp": False}
-                
+            
+            current_price = current_price_state.mid
+            
             biases = {}
             for tf in self.timeframes:
-                biases[tf] = self.calculate_tf_bias(tf, current_price, db)
+                biases[tf] = self.calculate_tf_bias(tf, current_price, db, as_of_ts=as_of_ts)
                 
             composite = self.calculate_composite(biases)
             
             # evaluate and possibly store
-            self.evaluate_signals(composite, biases)
+            self.evaluate_signals(composite, biases, current_price)
             
             bias_12m = biases.get('12M', 0)
             bias_3m = biases.get('3M', 0)

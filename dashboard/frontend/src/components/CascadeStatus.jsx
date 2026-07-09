@@ -15,12 +15,22 @@ const STATUS_LABELS = {
   zone_entered: 'Zone Entered',
 };
 
-export default function CascadeStatus() {
+export default function CascadeStatus({ simulationState = null }) {
   const [cascade, setCascade] = useState({ swing: [], scalp_path: [], scalp_cont: [] });
   const [loading, setLoading] = useState(true);
   const [direction, setDirection] = useState('bullish');
 
   useEffect(() => {
+    if (simulationState) {
+      if (simulationState.cascade) {
+        setCascade(simulationState.cascade);
+      } else {
+        setCascade({ swing: [], scalp_path: [], scalp_cont: [] });
+      }
+      setLoading(false);
+      return;
+    }
+    
     const fetchCascade = () => {
       client.get('/cascade/current')
         .then((res) => setCascade(res.data || { swing: [], scalp_path: [], scalp_cont: [] }))
@@ -30,7 +40,7 @@ export default function CascadeStatus() {
     fetchCascade();
     const interval = setInterval(fetchCascade, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [simulationState]);
 
   const swingTFs = ['12M', '3M', '1M'];
   const scalpTFs = ['4H', '1H'];

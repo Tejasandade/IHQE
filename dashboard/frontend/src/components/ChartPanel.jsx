@@ -50,7 +50,7 @@ function getCandleTime(timeframe, timestampMs) {
   return Math.floor(d.getTime() / 1000);
 }
 
-export default function ChartPanel({ timeframe, label, onPromote, onExpand, livePrice, timezoneMode = 'utc' }) {
+export default function ChartPanel({ timeframe, label, onPromote, onExpand, livePrice, timezoneMode = 'utc', simulationMode = false, simulationCandles = [], simulationState = null }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const candleSeriesRef = useRef(null);
@@ -69,8 +69,7 @@ export default function ChartPanel({ timeframe, label, onPromote, onExpand, live
     if (!containerRef.current) return;
 
     const chart = createChart(containerRef.current, {
-      width: containerRef.current.clientWidth,
-      height: containerRef.current.clientHeight || 400,
+      autoSize: true,
       layout: {
         background: { color: COLORS.background },
         textColor: COLORS.text,
@@ -132,16 +131,7 @@ export default function ChartPanel({ timeframe, label, onPromote, onExpand, live
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
 
-    const handleResize = () => {
-      chart.applyOptions({
-        width: containerRef.current.clientWidth,
-        height: containerRef.current.clientHeight || 400,
-      });
-    };
-    window.addEventListener('resize', handleResize);
-
     return () => {
-      window.removeEventListener('resize', handleResize);
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
@@ -184,6 +174,8 @@ export default function ChartPanel({ timeframe, label, onPromote, onExpand, live
 
   // Fetch and set OHLCV data
   useEffect(() => {
+    if (simulationMode) return;
+    
     console.log(`[ChartPanel ${timeframe}] Fetching data... candleSeriesRef exists:`, !!candleSeriesRef.current);
     if (!candleSeriesRef.current) return;
 
@@ -203,10 +195,11 @@ export default function ChartPanel({ timeframe, label, onPromote, onExpand, live
     }).catch((err) => {
       console.error(`[ChartPanel ${timeframe}] Fetch error:`, err);
     });
-  }, [timeframe]);
+  }, [timeframe, simulationMode]);
 
   // Handle live price updates
   useEffect(() => {
+    if (simulationMode) return;
     if (!candleSeriesRef.current || !ohlcvDataRef.current || ohlcvDataRef.current.length === 0 || !livePrice) return;
     
     const data = ohlcvDataRef.current;
@@ -249,11 +242,42 @@ export default function ChartPanel({ timeframe, label, onPromote, onExpand, live
 
   // Fetch overlays
   useEffect(() => {
-    client.get(`/fvg/${timeframe}`).then((res) => setFvgs(res.data || [])).catch(() => {});
-    client.get(`/fib_grids/${timeframe}`).then((res) => setFibs(res.data || [])).catch(() => {});
-    client.get(`/bos_events/${timeframe}`).then((res) => setBosEvents(res.data || [])).catch(() => {});
-    client.get(`/backtest/trades`).then((res) => setTrades(res.data || [])).catch(() => {});
-  }, [timeframe]);
+    if (!chartRef.current) return;
+    
+    if (simulationMode) {
+      if (simulationState && simulationState.overlays) {
+        setFvgs(simulationState.overlays.fvg[timeframe] || []);
+        setFibs(simulationState.overlays.fib[timeframe] || []);
+        setBosEvents(simulationState.overlays.bos[timeframe] || []);
+      } else {
+        setFvgs([]);
+        setFibs([]);
+        setBosEvents([]);
+      }
+      return;
+    }
+    
+    Promise.all([
+      client.get(`/history/fvg/${timeframe}`),
+      client.get(`/history/fib/${timeframe}`),
+      client.get(`/history/bos/${timeframe}`),
+    ]).then(([fvgRes, fibRes, bosRes]) => {
+      setFvgs(fvgRes.data || []);
+      setFibs(fibRes.data || []);
+      setBosEvents(bosRes.data || []);
+    }).catch(err => console.error(`[ChartPanel ${timeframe}] Overlay fetch error:`, err));
+  }, [timeframe, dataLoaded, simulationMode, simulationState]); 
+
+  // Handle simulation candles specifically
+  useEffect(() => {
+    if (simulationMode && candleSeriesRef.current && simulationCandles) {
+      candleSeriesRef.current.setData(simulationCandles);
+      // Optional: don't fit content on every tick to avoid jittering
+      if (simulationCandles.length > 0 && simulationCandles.length <= 200) {
+          chartRef.current.timeScale().fitContent();
+      }
+    }
+  }, [simulationMode, simulationCandles]);
 
   // Draw TradingView Native Tools and Overlays
   useEffect(() => {

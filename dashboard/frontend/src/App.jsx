@@ -5,6 +5,7 @@ import SignalBoard from './components/SignalBoard';
 import EquityPanel from './components/EquityPanel';
 import LoginPage from './components/LoginPage';
 import AlignmentGrid from './components/AlignmentGrid';
+import SimulationPanel from './components/SimulationPanel';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import useLivePrice from './hooks/useLivePrice';
 import client from './api/client';
@@ -27,6 +28,10 @@ function Dashboard() {
   const [expandedTf, setExpandedTf] = useState(null);
   const [cascadeData, setCascadeData] = useState(null);
   const [tzMode, setTzMode] = useState('utc');
+  
+  // Simulation State
+  const [simState, setSimState] = useState(null);
+  const [simCandleBuffer, setSimCandleBuffer] = useState([]);
 
   useEffect(() => {
     client.get('/cascade/current').then(res => setCascadeData(res.data)).catch(() => {});
@@ -78,7 +83,7 @@ function Dashboard() {
         </div>
 
         <nav className="topbar-nav">
-          {['charts', 'cascade', 'signals', 'performance'].map(tab => (
+          {['charts', 'cascade', 'signals', 'simulation', 'performance'].map(tab => (
             <button
               key={tab}
               className={`nav-btn ${activePanel === tab ? 'active' : ''}`}
@@ -148,6 +153,39 @@ function Dashboard() {
         {activePanel === 'signals' && (
           <div className="signals-panel">
             <SignalBoard />
+          </div>
+        )}
+
+        {activePanel === 'simulation' && (
+          <div className="simulation-mode-container">
+            <SimulationPanel 
+              isActive={true} 
+              onStateUpdate={setSimState}
+              onCandleBufferUpdate={(candles, reset) => {
+                if (reset) {
+                  setSimCandleBuffer(candles);
+                } else {
+                  setSimCandleBuffer(prev => [...prev, ...candles]);
+                }
+              }}
+            />
+            <div className="dashboard-layout" style={{marginTop: '20px'}}>
+              <div className="master-zone">
+                <ChartPanel
+                  key="sim-master"
+                  timeframe="1H"
+                  label="Simulation (1H)"
+                  livePrice={null}
+                  timezoneMode={tzMode}
+                  simulationMode={true}
+                  simulationCandles={simCandleBuffer}
+                  simulationState={simState}
+                />
+              </div>
+              <div className="context-zone">
+                <CascadeStatus simulationState={simState} />
+              </div>
+            </div>
           </div>
         )}
 

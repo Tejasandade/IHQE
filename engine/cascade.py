@@ -122,11 +122,15 @@ class SwingCascade:
 
     def get_gates_confirmed(self) -> int:
         """
-        Returns count of gates with status in
-        ('bos_confirmed', 'fvg_confirmed', 'zone_entered').
-        Maximum 3 for swing cascade.
+        Returns count of gates for the 3M cascade (3M, 1M).
+        12M is tracked separately for signal upgrades.
         """
-        return sum(1 for g in self.gates.values() if g.is_confirmed)
+        count = 0
+        if self.gates["3M"].is_confirmed:
+            count += 1
+        if self.gates["1M"].is_confirmed:
+            count += 1
+        return count
 
     def get_current_signal_type(self) -> Optional[str]:
         """Returns signal type based on gates_confirmed count."""
@@ -134,10 +138,8 @@ class SwingCascade:
         if gc == 0:
             return None
         elif gc == 1:
-            return "macro_alert"
-        elif gc == 2:
-            return "mid_alert"
-        elif gc >= 3:
+            return "mid_alert"      # 3M BOS confirmed
+        elif gc >= 2:
             # Check if 1M zone is entered
             if self.gates["1M"].gate_status == "zone_entered":
                 return "execute"
@@ -145,9 +147,9 @@ class SwingCascade:
         return None
 
     def is_entry_valid(self) -> bool:
-        """True only when all 3 gates are confirmed AND 1M zone is entered."""
+        """True only when 3M cascade is fully confirmed AND 1M zone is entered."""
         return (
-            self.get_gates_confirmed() == 3
+            self.get_gates_confirmed() == 2
             and self.gates["1M"].gate_status == "zone_entered"
         )
 
@@ -188,28 +190,28 @@ class SwingCascade:
         gate = self.gates[timeframe]
 
         if timeframe == "12M":
-            self._process_12m(gate, live_price)
+            self._process_independent_gate(gate, live_price)
         elif timeframe == "3M":
-            self._process_child(gate, self.gates["12M"], live_price)
+            self._process_independent_gate(gate, live_price)
         elif timeframe == "1M":
             self._process_child(gate, self.gates["3M"], live_price)
 
-    def _process_12m(self, gate: SwingGate, live_price: float):
-        """Process the 12M gate — BOS detection only."""
+    def _process_independent_gate(self, gate: SwingGate, live_price: float):
+        """Process an independent gate (12M or 3M) — BOS detection only."""
         if gate.gate_status == "waiting":
             # Check for BOS on 12M candles
             candles = self.db.get_ohlcv("12M")
             if candles.empty:
                 return
 
-            bos_events = self.bos_detector.detect(candles, "12M")
+            bos_events = self.bos_detector.detect(candles, gate.timeframe)
             active_bos = self.bos_detector.get_active_bos(
-                bos_events, "12M", self.direction
+                bos_events, gate.timeframe, self.direction
             )
 
             if active_bos:
                 # Build Fibonacci grid from BOS swing points
-                grid = self.fib_calculator.build_grid_from_bos(active_bos, "12M")
+                grid = self.fib_calculator.build_grid_from_bos(active_bos, gate.timeframe)
                 if grid:
                     grid = self.fib_calculator.check_grid_invalidation(
                         grid, candles
@@ -217,7 +219,7 @@ class SwingCascade:
                     if grid["is_active"]:
                         gate.confirm_bos(active_bos, grid, active_bos["bos_candle_ts"])
                         logger.info(
-                            f"12M BOS confirmed: {active_bos['direction']} | "
+                            f"{gate.timeframe} BOS confirmed: {active_bos['direction']} | "
                             f"Swing: ${active_bos['swing_low']:.2f}-${active_bos['swing_high']:.2f}"
                         )
 
@@ -228,14 +230,14 @@ class SwingCascade:
                     if self.fib_calculator.is_in_discount_zone(live_price, gate.grid):
                         gate.enter_zone()
                         logger.info(
-                            f"12M zone entered: price ${live_price:.2f} below 0.5 "
+                            f"{gate.timeframe} zone entered: price ${live_price:.2f} below 0.5 "
                             f"(${gate.grid['level_0_500']:.2f})"
                         )
                 elif self.direction == "bearish":
                     if self.fib_calculator.is_in_premium_zone(live_price, gate.grid):
                         gate.enter_zone()
                         logger.info(
-                            f"12M zone entered: price ${live_price:.2f} above 0.5 "
+                            f"{gate.timeframe} zone entered: price ${live_price:.2f} above 0.5 "
                             f"(${gate.grid['level_0_500']:.2f})"
                         )
 
@@ -504,6 +506,37 @@ class SwingCascade:
 
         # States
         if states:
+            try:
+                # Check for state changes to trigger Telegram alerts
+                old_states_df = self.db.get_cascade_states()
+                old_states_dict = {}
+                if not old_states_df.empty:
+                    for _, row in old_states_df.iterrows():
+                        old_states_dict[(row['timeframe'], row['direction'])] = row['gate_status']
+                        
+                from alerts.telegram_bot import send_telegram_alert
+                from engine.intelligence.mtf_engine import mtf_engine
+                
+                comp_result = mtf_engine.run()
+                comp_score = comp_result.get("composite_score", 0.0)
+                gates_confirmed = self.get_gates_confirmed()
+                
+                for s in states:
+                    tf = s['timeframe']
+                    direction = s['direction']
+                    new_status = s['gate_status']
+                    old_status = old_states_dict.get((tf, direction), "waiting")
+                    
+                    if old_status != new_status:
+                        msg = (
+                            f"🔶 IHQE — Gate Update | {tf} gate: {old_status} → {new_status} | "
+                            f"Direction: {direction} | Cascade: {gates_confirmed}/3 | "
+                            f"Score: {comp_score} | {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}"
+                        )
+                        send_telegram_alert(f"gate_{tf}_{direction}_{new_status}", msg)
+            except Exception as e:
+                logger.error(f"Error sending gate update alert: {e}")
+
             self.db.insert_cascade_states(states)
 
 
@@ -688,14 +721,33 @@ def run_full_cascade(db_client) -> dict:
             "gates_confirmed": swing.get_gates_confirmed(),
             "signal_type": swing.get_current_signal_type(),
             "entry_valid": swing.is_entry_valid(),
+            "12m_aligned": swing.gates["12M"].gate_status == "zone_entered",
         }
 
-    # Determine macro trend
+    # Determine 12M Macro Bias
+    df_bull = db_client.get_bos_events("12M", "bullish", active_only=True)
+    df_bear = db_client.get_bos_events("12M", "bearish", active_only=True)
+    
+    ts_bull = df_bull.iloc[-1]["bos_candle_ts"] if not df_bull.empty else None
+    ts_bear = df_bear.iloc[-1]["bos_candle_ts"] if not df_bear.empty else None
+    
+    macro_bias = 0
+    if ts_bull and ts_bear:
+        macro_bias = 1 if ts_bull > ts_bear else -1
+    elif ts_bull:
+        macro_bias = 1
+    elif ts_bear:
+        macro_bias = -1
+        
+    results["12m_macro_bias"] = macro_bias
+
+    # Determine macro trend (legacy)
     bull_gates = results["bullish"]["gates_confirmed"]
     bear_gates = results["bearish"]["gates_confirmed"]
     results["macro_trend"] = "bullish" if bull_gates >= bear_gates else "bearish"
 
-    print(f"\n  Macro Trend: {results['macro_trend'].upper()}")
+    print(f"\n  Macro Bias (12M): {macro_bias}")
+    print(f"  Macro Trend: {results['macro_trend'].upper()}")
     print(f"  Bullish swing gates: {bull_gates}/3")
     print(f"  Bearish swing gates: {bear_gates}/3")
 

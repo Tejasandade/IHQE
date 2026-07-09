@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:23.8
+    container_name: ihqe-clickhouse
+    ports:
+      - "9000:9000"
+      - "8123:8123"
+    volumes:
+      - ihqe_ch_data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: ihqe-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${PG_DATABASE:-ihqe_app}
+      POSTGRES_USER: ${PG_USER:-ihqe}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-ihqe_secret}
+    volumes:
+      - ihqe_pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  api:
+    build: .
+    container_name: ihqe-api
+    ports:
+      - "8000:8000"
+    depends_on:
+      - clickhouse
+      - postgres
+    environment:
+      - CH_HOST=clickhouse
+      - CH_PORT=9000
+      - CH_HTTP_PORT=8123
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_DATABASE=${PG_DATABASE:-ihqe_app}
+      - PG_USER=${PG_USER:-ihqe}
+      - PG_PASSWORD=${PG_PASSWORD:-ihqe_secret}
+      - JWT_SECRET=${JWT_SECRET}
+      - TIINGO_API_TOKEN=${TIINGO_API_TOKEN}
+      - INTERNAL_API_URL=http://api:8000
+    env_file:
+      - ./config/.env
+    volumes:
+      - ./data:/app/data
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 1
+    restart: unless-stopped
+
+  frontend:
+    build: 
+      context: ./dashboard/frontend
+      dockerfile: Dockerfile
+    container_name: ihqe-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  ihqe_ch_data:
+  ihqe_pg_data:

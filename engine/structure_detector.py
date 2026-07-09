@@ -302,5 +302,22 @@ if __name__ == "__main__":
 
     db = ClickHouseClient()
     detector = StructureDetector(db)
-    detector.detect_all_timeframes()
+    
+    # Startup validation check
+    try:
+        bos_df = db.query_df("SELECT count() as c FROM ihqe.bos_events")
+        bos_count = bos_df.iloc[0, 0] if not bos_df.empty else 0
+        
+        candle_df = db.query_df("SELECT count() as c FROM ihqe.xauusd_ohlcv WHERE timeframe = '12M'")
+        candle_count = candle_df.iloc[0, 0] if not candle_df.empty else 0
+        
+        if candle_count > 0 and (bos_count / candle_count) < 0.5:
+            logging.warning(f"WARNING: BOS event count too low for dataset size ({bos_count} BOS / {candle_count} 12M candles). Running full structure scan.")
+            detector.detect_all_timeframes(incremental=False)
+        else:
+            detector.detect_all_timeframes(incremental=True)
+    except Exception as e:
+        logging.error(f"Failed startup validation check: {e}")
+        detector.detect_all_timeframes(incremental=True)
+        
     db.close()

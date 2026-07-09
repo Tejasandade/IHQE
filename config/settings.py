@@ -9,6 +9,15 @@ TIINGO_WS_URL    = "wss://api.tiingo.com/fx"
 TIINGO_TICKER    = "xauusd"
 TIINGO_THRESHOLD = 5  # Filter level — suppresses micro-pip noise
 
+# ── System / Env ─────────────────────────────────────────────────────────────
+ENV = os.getenv("IHQE_ENV", "development")
+DEBUG = os.getenv("IHQE_DEBUG", "True").lower() == "true"
+
+# ── Telegram Alerts ────────────────────────────────────────────────────────
+TELEGRAM_ENABLED = os.getenv("TELEGRAM_ENABLED", "False").lower() == "true"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+
 # ── ClickHouse ──────────────────────────────────────────────────────────────
 CH_HOST     = os.getenv("CH_HOST", "localhost")
 CH_PORT     = int(os.getenv("CH_PORT", 9000))

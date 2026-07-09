@@ -156,7 +156,10 @@ class OHLCVBuilder:
         if inserted > 0:
             run_intelligence_engine()
             try:
-                requests.post("http://localhost:8000/api/internal/refresh-cache", timeout=2)
+                # Use internal Docker DNS if running in containers
+                import os
+                api_host = os.getenv("INTERNAL_API_URL", "http://api:8000")
+                requests.post(f"{api_host}/api/internal/refresh-cache", timeout=2)
                 logger.info("Triggered SniperEngine cache refresh via API")
             except Exception as e:
                 logger.warning(f"Could not trigger cache refresh: {e}")

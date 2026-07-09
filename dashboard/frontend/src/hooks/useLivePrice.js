@@ -6,7 +6,9 @@ export default function useLivePrice() {
   const wsRef = useRef(null);
 
   const connect = useCallback(() => {
-    const ws = new WebSocket('ws://localhost:8000/api/live/price');
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsHost = import.meta.env.VITE_WS_URL || `${wsProtocol}//${window.location.host}/api`;
+    const ws = new WebSocket(`${wsHost}/live/price`);
     wsRef.current = ws;
 
     ws.onopen = () => setConnected(true);
